@@ -1,32 +1,31 @@
-function network_transport_model_Neu(varargin)
+function [N, M, F_in, F_out, R_Edge_Mass] = network_transport_model_Neu_func(matdir,varargin) %(matdir,varargin)
 
 if nargin < 4
     matdir = [cd filesep 'MatFiles'];
  %matdir = [cd filesep 'MatFiles'];
 end
-alpha_ =0; %1e-2;  % 0; % Recruitment term
-F_edge_0_ = 2; %1e-8*6*30*24*(60)^2;%1e-08; %Recruitment term edge % 0.5 - 9.9
+alpha_ = 0;
+F_edge_0_ = 0;
 beta_ = 1e-06;
-gamma1_ = 0.001; %1e-5 ;%0.001; %2e-03; 
+gamma1_ =0.001;
 gamma2_ = 0;
-delta_ = 100;% 1; %50;
-epsilon_ = 10; %1e-02;
-    %25;
-lambda1_ = 0.1; %1e-02;   %0.005;%0.025
-%lambda2_ = 1e-02; %0.005;% 0.025
+delta_ = 50;
+epsilon_ = 50; 
+lambda1_ = 1e-02;
+%lambda2_ = 1e-02;
 gamma1_dt_=0;
 lambda_dt_=0;
 study_ = 'Hurtado';
 init_path_ = [];
-init_rescale_ = 2e-2; %2e-2;
+init_rescale_ = 2e-2;
 dt_ =0.01;
 T_ = 0.1;
-trange_ =[0:0.0005:0.002, 0.0025: 0.0025: 0.1, 0.105:0.005:0.3, 0.31:0.01:1];
-%trange_ =[0: 0.00005: 0.0001]; %   %0.00009, 0.0001:0.0001:0.0009,0.001:0.001: 0.002, 0.0025: 0.0025: 0.01];
+
+trange_ = [0:0.0005:0.002, 0.0025:0.0025:0.1, 0.11:0.01:1];
+
 length(trange_)
-%trange_ =[0 0.0005: 0.0025, 0.003: 0.0025: 0.053];
-frac_ = 0.92; % Average fraction of n diffusing (Konsack 2007)
-L_int_ = 1000; % in micrometers
+frac_ = 0.7;
+L_int_ = 1000; % in micrometers - SET to Matrix from Human Dist. Template!!!
 L1_ = 200;
 %L2_ = 200; 
 L_ais_ = 40;
@@ -40,10 +39,10 @@ connectome_subset_ = 'Hippocampus+PC+RSP';
 time_scale_ = 6*30*24*(60)^2;
 len_scale_ = 1e-3;
 
-mu_r_0_ = 5; %1e-07*time_scale_; %1.5552 %release at x=0 % 1-9.9
-mu_r_L_ = mu_r_0_; %release at x=L
-mu_u_0_ = 5; %1e-07*time_scale_; %uptake at x=0 % 1-9.9
-mu_u_L_ = mu_u_0_; %uptake at x=L
+mu_r_0_ = 1.5;
+mu_r_L_ = mu_r_0_;
+mu_u_0_ = 1.5;
+mu_u_L_ = mu_u_0_;
 
 axon_div_ = 'r1';
 
@@ -93,8 +92,8 @@ parse(ip, varargin{:});
 load([matdir filesep 'Mouse_Tauopathy_Data_HigherQ.mat'],'mousedata_struct'); 
 load([matdir filesep 'DefaultAtlas.mat'],'DefaultAtlas'); 
 load([matdir filesep 'CCF_labels.mat'],'CCF_labels');
-load([matdir filesep 'Connectomes.mat'],'Connectomes');
-Conn = Connectomes.default;
+load([matdir filesep 'Connectome-Human-Directed-DK.mat'],'Consensus');
+Conn = Connectomes.SC;
 for i=1:length(Conn)
     for j=1:length(Conn)
        if i==j
@@ -126,7 +125,10 @@ if ~isempty(ip.Results.init_path)
         init_path((reglog + hemlog) == 2) = 1;
     end
 elseif isnan(mousedata_struct.(ip.Results.study).seed)
-    init_path = logical(mousedata_struct.(ip.Results.study).data(:,1));
+    %init_path = logical(mousedata_struct.(ip.Results.study).data(:,1));
+    init_path = mousedata_struct.(ip.Results.study).data(:,1);
+    mean_nz = mean(nonzeros(init_path));
+    init_path = init_path ./ mean_nz; % For IbaP301S study where seed is not specified and data is nonbinary at t=1
     init_path = DataToCCF(init_path,ip.Results.study,matdir);
 else
     init_path = logical(mousedata_struct.(ip.Results.study).seed);
@@ -197,11 +199,13 @@ end
  
  i_zero=N(:,1)==0;   %init_tau==0;
 
+Regional_edge_mass = zeros([nroi, nroi, nt, 4]);
+
  netw_flux_0= zeros([nroi,size(N)]);
   netw_flux_L= zeros([nroi,size(N)]);
-  Mass_edge=zeros([nroi,nroi,nt]);
+  %Mass_edge=zeros([nroi,nroi,nt]);
   n_ss0=zeros([nroi,nroi,nt]);
-
+  %res_max=zeros(1,nt);
  Gamma1=gamma1_new*ones(nroi,nt);
  %Gamma1_der=zeros(nroi,nt);
 F_source_edge=zeros([nroi,nroi,nt]);
@@ -241,10 +245,13 @@ Gamma1_x0_0=gamma1_new*ones(1,3);     %Gamma1(:,1).*Adj;
 Lambda1_x0_0=ip.Results.lambda1*ones(1,3);       %Lambda1(:,1).*Adj;
 %f_ss0=0.0001*ones(nroi);
 f_ss0=[0.0001 0.0001  0.0001];
+
+Adj_in = readmatrix([matdir filesep 'mouse_adj_matrix_19_01.csv']);
+
  fprintf('Flux calculation at initial time \n') 
  tic
  
-  [J_0,J_L,F_source_edge_0,n_ss_init]=NetworkFluxCalculator_Neu(N_adj_0,N_adj_L,f_ss0,matdir,'beta',ip.Results.beta,...
+  [J_0,J_L,F_source_edge_0,n_ss_init]=NetworkFluxCalculator_Neu(N_adj_0,N_adj_L,f_ss0,Adj_in,'beta',ip.Results.beta,...
                                     'delta',ip.Results.delta,'F_edge_0',ip.Results.F_edge_0,...
                                     'epsilon',ip.Results.epsilon,...
                                     'frac',ip.Results.frac,...
@@ -265,6 +272,7 @@ f_ss0=[0.0001 0.0001  0.0001];
                                     'time_scale', ip.Results.time_scale, 'connectome_subset','Single_bis', ...
                                     'mu_r_0',ip.Results.mu_r_0,'mu_r_L',ip.Results.mu_r_L, 'mu_u_0',ip.Results.mu_u_0, 'mu_u_L',ip.Results.mu_u_L ); %compute the steady state  network flux at time t0
 
+  %res_max(1,1);
  netw_flux_0(seedregions_,:,1)=J_0(1,1)*Adj(seedregions_,:);
 netw_flux_L(seedregions_,:,1)=J_L(1,1)*Adj(seedregions_,:);
 netw_flux_0(:,seedregions_,1)=J_0(1,2)*Adj(:,seedregions_);
@@ -275,13 +283,13 @@ netw_flux_L(seedregions_,seedregions_,1)=J_L(1,3)*Adj(seedregions_,seedregions_)
 % Adj(seedregions_,seedregions_)
 % netw_flux_0(:,:,1)
 % netw_flux_L(:,:,1)
-Mass_edge(seedregions_,:,1)=Mass_edge_0(1,1)*Adj(seedregions_,:);
-Mass_edge(:,seedregions_,1)=Mass_edge_0(1,2)*Adj(:,seedregions_);
-Mass_edge(seedregions_,seedregions_,1)=Mass_edge_0(1,3)*Adj(seedregions_,seedregions_);
+%Mass_edge(seedregions_,:,1)=Mass_edge_0(1,1)*Adj(seedregions_,:);
+%Mass_edge(:,seedregions_,1)=Mass_edge_0(1,2)*Adj(:,seedregions_);
+%Mass_edge(seedregions_,seedregions_,1)=Mass_edge_0(1,3)*Adj(seedregions_,seedregions_);
 F_source_edge(seedregions_,:,1)=F_source_edge_0(1,1)*Adj(seedregions_,:);
 F_source_edge(:,seedregions_,1)=F_source_edge_0(1,2)*Adj(:,seedregions_);
 F_source_edge(seedregions_,seedregions_,1)=F_source_edge_0(1,3)*Adj(seedregions_,seedregions_);
-%n_ss0(:,:,1)
+
 n_ss0(seedregions_,:,1)=n_ss_init(1,1)*Adj(seedregions_,:);
 n_ss0(:,seedregions_,1)=n_ss_init(1,2)*Adj(:,seedregions_);
 n_ss0(seedregions_,seedregions_,1)=n_ss_init(1,3)*Adj(seedregions_,seedregions_);
@@ -294,21 +302,24 @@ for h=1:  (nt-1)
   fprintf('Time step %d/%d\n',h,nt-1) 
  %tic
 
-
-
+ %m_t= Gamma1(:,h).*N(:,h).*(2*beta_new-ip.Results.gamma2.*N(:,h)./(beta_new-ip.Results.gamma2.*N(:,h)).^2);
+ m_t= Gamma1(:,h).*N(:,h).*((2*beta_new-ip.Results.gamma2.*N(:,h))./(beta_new-ip.Results.gamma2.*N(:,h)).^2);
  
- m_t= Gamma1(:,h).*N(:,h).*(2*beta_new-ip.Results.gamma2.*N(:,h)./(beta_new-ip.Results.gamma2.*N(:,h)).^2);
+ 
+ %F_in=time_scale.*netw_flux(:,:,h);
  F_in=netw_flux_L(:,:,h);
  F_out=netw_flux_0(:,:,h);
 F_out=F_out.';
 
- if h<=5
+ if h<=5000 % previously 5
      N_app=N(:,h)+(1./(Vol.*(1+m_t))).*( ( diag((Conn.'*F_in)) - diag((Conn*F_out))) ).*((t(h+1)-t(h))/2);
+     %Fun_app=(1./(Vol.*(1+m_t))).*( ( diag((Conn.'*F_in)) - diag((Conn*F_out))) );
      N_adj_app=N_app.*Adj;
 
   Gamma1_x0_app=Gamma_app.*Adj;
+  %Gamma1_der_x0_h1=Gamma1_der(:,h+1).*Adj;
   Lambda1_x0_app=Lambda1_app.*Adj;
-[F_out_app,F_in_app,~,~]=NetworkFluxCalculator_Neu(N_adj_app,N_app,n_ss0(:,:,h),matdir,'beta',ip.Results.beta,...
+[F_out_app,F_in_app,~,~]=NetworkFluxCalculator_Neu(N_adj_app,N_app,n_ss0(:,:,h),Adj_in,'beta',ip.Results.beta,...
                                     'delta',ip.Results.delta,'F_edge_0',ip.Results.F_edge_0,...
                                     'epsilon',ip.Results.epsilon,...
                                     'frac',ip.Results.frac,...
@@ -329,40 +340,31 @@ F_out=F_out.';
                                     'time_scale', ip.Results.time_scale, 'connectome_subset',ip.Results.connectome_subset, ...
                                     'mu_r_0',ip.Results.mu_r_0,'mu_r_L',ip.Results.mu_r_L, 'mu_u_0',ip.Results.mu_u_0, 'mu_u_L',ip.Results.mu_u_L ); %compute the steady state  network flux at time t0
 F_out_app=F_out_app.';
-m_t_app=Gamma_app.*N_app.*(2*beta_new-ip.Results.gamma2.*N_app./(beta_new-ip.Results.gamma2.*N_app).^2);
+%m_t_app=Gamma_app.*N_app.*(2*beta_new-ip.Results.gamma2.*N_app./(beta_new-ip.Results.gamma2.*N_app).^2);
+m_t_app=Gamma_app.*N_app.*((2*beta_new-ip.Results.gamma2.*N_app)./(beta_new-ip.Results.gamma2.*N_app).^2);
+
 Fun_app_2=(1./(Vol.*(1+m_t_app))).*( ( diag((Conn.'*F_in_app)) - diag((Conn*F_out_app))) );
 N(:,h+1)=N(:,h)+(Fun_app_2).*((t(h+1)-t(h)));
  else
  N(:,h+1)=N(:,h)+(1./(Vol.*(1+m_t))).*( ( diag((Conn.'*F_in)) - diag((Conn*F_out))) ).*(t(h+1)-t(h));  %ip.Results.dt  ; %((diag((Conn.'*F_in)) - diag((Conn*F_out)))*k + beta*m(:,h)*k-gamma1*(n(:,h).*n(:,h))*k-gamma2*(n(:,h).*m(:,h))*k);
  end
 
-
-
-
-
-%der(:,h)=(N(:,h+1)-N(:,h))./(t(h+1)-t(h))
+ N(:,h+1) = N(:,h+1) + ip.Results.alpha*(t(h+1)-t(h))*N(:,h);
  
- % seedregions_ = (N(:,1) > 0);
- %N(seedregions_,h+1) = N(seedregions_,h+1) + ip.Results.alpha*(t(h+1)-t(h))*N(seedregions_,h); % exponential growth in seed region
- N(seedregions_,h+1) = N(seedregions_,h+1) + ip.Results.alpha*(t(h+1)-t(h)); % linear growth in seed region
- 
- 
-
   N_adj_h1=N(:,h+1).*Adj;
  
   Gamma1_x0_h1=Gamma1(:,h+1).*Adj;
   %Gamma1_der_x0_h1=Gamma1_der(:,h+1).*Adj;
   Lambda1_x0_h1=Lambda1(:,h+1).*Adj;
 
- 
- 
    fprintf('Flux calculation \n') 
 
-
-
-
   tic
-[netw_flux_0(:,:,h+1),netw_flux_L(:,:,h+1),F_source_edge(:,:,h+1),n_ss0(:,:,h+1)]=NetworkFluxCalculator_Neu(N_adj_h1,N(:,h+1),n_ss0(:,:,h),matdir,'beta',ip.Results.beta,...
+
+  % Regional_edge_mass(:,:,h+1,:)
+  % Mass_edge(:,:,h+1)
+
+[netw_flux_0(:,:,h+1),netw_flux_L(:,:,h+1),F_source_edge(:,:,h+1),n_ss0(:,:,h+1)]=NetworkFluxCalculator_Neu(N_adj_h1,N(:,h+1),n_ss0(:,:,h),Adj_in,'beta',ip.Results.beta,...
                                     'delta',ip.Results.delta,'F_edge_0',ip.Results.F_edge_0,...
                                     'epsilon',ip.Results.epsilon,...
                                     'frac',ip.Results.frac,...
@@ -385,171 +387,11 @@ N(:,h+1)=N(:,h)+(Fun_app_2).*((t(h+1)-t(h)));
 
 
  toc
+
 end
-  
 
-[Max_der, I_max_der]=max(der(:,1));
-
- fprintf('I max der= %d\n',I_max_der)
  M=(Gamma1.* N.^2)./(beta_new-ip.Results.gamma2 * N);
-  %M_approx=(Gamma1.* N_approx.^2)./(beta_new-ip.Results.gamma2 * N_approx);
+ R_Edge_Mass = 0; % Regional_edge_mass;
 
-     Mass_node = sum(Vol.*N,1)+sum(Vol.*M,1);
-    % size(Mass_node)
-     fprintf('Total Node Mass = %d\n',Mass_node)
-    Mass_tot_edge=zeros(1,nt);
-    for h=1:(nt)
-        Mass_tot_edge(1,h) = sum(Conn.*Mass_edge(:,:,h),'all');
-    end
-    fprintf('Total Edge Mass = %d\n',Mass_tot_edge)
-    for h=1:nt
-        F=sum(F_source_edge(:,:,h),'all')
-    end
-     F_source_ed=zeros(1,nt);
-    for h=1:nt
-      F_source_ed(1,h)=sum(Conn.*F_source_edge(:,:,h),'all').*t(h)
-    end
-    F_source_nodes=zeros(1,nt);
-    source_reg=ones(nroi,1);
-    for h=1:nt
-    F_source_nodes(1,h)=sum(Vol(seedregions_).*(ip.Results.alpha*source_reg(seedregions_,1)) ,'all').*t(h);
-    end
-     M_tot=Mass_node+Mass_tot_edge
-     F_source=F_source_nodes+F_source_ed
-     M_tot_tru=M_tot(1,1)+F_source
-     Mass_error=(M_tot-(M_tot(1,1)+F_source))./(M_tot(1,1)+F_source)
-
-    txt = ['$\mathbf{\gamma}_{1,t}$' num2str(ip.Results.gamma1_dt),',', '$\mathbf{\lambda}_{t}$',',' num2str(ip.Results.lambda_dt),',' '$\mathbf{\lambda_1} = $' num2str(lambda1_)  ',' , '$\mathbf{\beta}=$' num2str(beta_) ','  '$\mathbf{\epsilon}=$' num2str(epsilon_) ',', '$\mathbf{\delta}=$' num2str(delta_) ];
-    figure%(1)
-    plot(t,M_tot,'r')
-    hold on
-    plot(t,M_tot_tru,'b')
-    ylabel('t')
-    xlabel('Mass(t)')
-    title('Total mass vs total mass true')
-     subtitle(txt,'Interpreter','latex');
-%      saveas(figure(1),[ cd '/plot/' 'Tot_mass' '_' 'lambda_var_bis' '.png' ])
-%     M_tot(1,1)
-%   reldiffs = M_tot - M_tot(1,1);
-% reldiffs = reldiffs ./ M_tot(1,1);
-% 
-figure %(2); 
-%hold on;
-%for i = 1:size(masstots,1)
-    plot(t,Mass_error); 
-    ylabel('t')
-    xlabel('E(t)')
-    title('Relative error Total mass')
- subtitle(txt,'Interpreter','latex');
-%     saveas(figure(2),[ cd '/plot/' 'Rel_err' '_' 'lambda_var_bis' '.png' ])
-% %end
-% 
-% 
-% 
-% 
-figure%(3)
-%figure
-subplot(2,1,1)
-plot(t,N);
-
-
-xlabel('t');
-ylabel('N(t)');
- title("N,M distributions on the network",'Fontsize',12);
-  %txt = ['$\mathbf{\gamma}_{1,t} = $' num2str(gamma1_dt), ',','$\mathbf{\lambda_1} = $' num2str(lambda1_) ',' '$\mathbf{\lambda_2} = $' num2str(lambda2_) ',' , '$\mathbf{\beta}=$' num2str(beta_) ','  '$\mathbf{\epsilon}=$' num2str(epsilon_) ',', '$\mathbf{\delta}=$' num2str(delta_) ];
- %subtitle(txt,'Interpreter','latex');
-subplot(2,1,2)
-plot(t,M);
-xlabel('t');
-ylabel('M(t)');
-%  saveas(figure(3),[ cd '/plot/' 'N_M' '_' 'lambda_var_bis' '.png' ])
-% 
-
-figure%(4)
-%figure
-subplot(2,1,1)
-plot(t,N(i_zero,:));
- title("N,M distributions on the network",'Fontsize',12);
- % txt = ['$\mathbf{\gamma}_{1,t}$' num2str(gamma1_dt),',', '$\mathbf{\lambda}_{t}$',',' num2str(lambda_dt),',' '$\mathbf{\lambda_1} = $' num2str(lambda1_) ',' '$\mathbf{\lambda_2} = $' num2str(lambda2_) ',' , '$\mathbf{\beta}=$' num2str(beta_) ','  '$\mathbf{\epsilon}=$' num2str(epsilon_) ',', '$\mathbf{\delta}=$' num2str(delta_) ];
- %subtitle(txt,'Interpreter','latex');
-subplot(2,1,2)
-plot(t,M(i_zero,:));
-%  saveas(figure(4),[ cd '/plot/' 'N_M_no_seed' '_' 'lambda_var_bis' '.png' ])
-
-figure%(5)
-%figure
-
-xlabel('t');
-ylabel('res_max');
- title("max residual shooting parameter calculation",'Fontsize',12);
-
-
-% 
-% figure(5)
-% %figure
-% plot(t,N+M);
-% 
-% 
-% xlabel('t');
-% ylabel('N(t)+M(t)');
-%  title("N,M distributions on the network",'Fontsize',12);
-%   %txt = ['$\mathbf{\gamma}_{1,t}$' num2str(gamma1_dt),',','$\mathbf{\lambda_1} = $' num2str(lambda1_) ',' '$\mathbf{\lambda_2} = $' num2str(lambda2_) ',' , '$\mathbf{\beta}=$' num2str(beta_) ','  '$\mathbf{\epsilon}=$' num2str(epsilon_) ',', '$\mathbf{\delta}=$' num2str(delta_) ];
-%  subtitle(txt,'Interpreter','latex');
-%  saveas(figure(5),[ cd '/plot/' 'Tot_tau' '_' 'lambda_var_bis' '.png' ])
-% 
-%  %figure(5)
-% figure(6)
-% plot(t,N(i_zero,:)+M(i_zero,:));
-% 
-% 
-% xlabel('t');
-% ylabel('N(t)+M(t)');
-%  title("Total Tau on the network",'Fontsize',12);
-%   %txt = ['$\mathbf{\gamma}_{1,t}$' num2str(gamma1_dt),',','$\mathbf{\lambda_1} = $' num2str(lambda1_) ',' '$\mathbf{\lambda_2} = $' num2str(lambda2_) ',' , '$\mathbf{\beta}=$' num2str(beta_) ','  '$\mathbf{\epsilon}=$' num2str(epsilon_) ',', '$\mathbf{\delta}=$' num2str(delta_) ];
-%  subtitle(txt,'Interpreter','latex');
-%  saveas(figure(6),[ cd '/plot/' 'Tot_tau_no_seed' '_' 'lambda_var_bis' '.png' ])
-% %nroi_idx=1:nroi;
-%   %figure(6)
-% figure(7)
-% heatmap(N(i_zero,1:end)+M(i_zero,1:end));
-% 
-% 
-% xlabel('t');
-% ylabel('N(t)+M(t)');
-%  title("Total Tau on the network");
-% % subtitle(txt,'Interpreter','latex');
-%  saveas(figure(7),[ cd '/plot/' 'Tot_tau_heatmap' '_' 'lambda_var' '.png' ])
-%  %  txt = ['$\mathbf{\gamma}_{1,t}$' num2str(gamma1_dt),',','$\mathbf{\lambda_1} = $' num2str(lambda1_) ',' '$\mathbf{\lambda_2} = $' num2str(lambda2_) ',' , '$\mathbf{\beta}=$' num2str(beta_) ','  '$\mathbf{\epsilon}=$' num2str(epsilon_) ',', '$\mathbf{\delta}=$' num2str(delta_) ];
-%  % subtitle(txt,'Interpreter','latex');
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% figure(8)
-% for h=1:nt
-% 
-%     subplot(2,1,1)
-%     %heatmap(1:nroi,1:nroi, B(:,:,h))
-%     plot(t(h),max(abs(B(:,:,h)),[],'all'),'o',LineWidth=2)
-%     hold on
-%     title('B network')
-%     %subtitle(txt,'Interpreter','latex')
-%     subplot(2,1,2)
-%     %heatmap(1:nroi,1:nroi,6*30*24*(60)^2*netw_flux(:,:,h))
-% 
-%     plot(t(h),max(abs(6*30*24*(60)^2*netw_flux(:,:,h)),[],'all'),'*',LineWidth=2)
-%    hold on
-%  % xlabel('nroi')
-%  % ylabel('J,B (o-* line)' )
-%  title('J network')
-% 
-% end
-% % saveas(figure(8),[ cd '/plot/' 'B_J' '_' 'lambda_var' '.png' ])
-% saveas(figure(8),[ cd '/plot/' 'BJ' '_' 'lambda_var_bis' '.png' ])
-
-end
+ F_in = netw_flux_0;
+ F_out = netw_flux_L;
