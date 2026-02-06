@@ -148,21 +148,13 @@ xmesh = [xmesh1, xmesh_int];
 
 % % % 4. Steady State Calculation
 % Follows the derivation of Michiel Bertsh
-%gamma_1 time dipendent convex combination
-% gamma1_fun=@(gamma1_i,gamma1_j,x)(1-x./L_total).*(gamma1_i)+(x./L_total).*(gamma1_j);
-% gamma1_der_fun=@(gamma1_der_i,gamma1_der_j,x)(1-x./L_total).*(gamma1_der_i)+(x./L_total).*(gamma1_der_j);
-% %lambda_fun=@(lambda_i,lambda_j,x)(1-x./L_total).*(lambda_i)+(x./L_total).*(lambda_j);
+
 gamma1_fun=@(gamma1_i,gamma1_j,x)(gamma1_i+gamma1_j)./2;
 lambda_fun=@(lambda_i,lambda_j,x)(lambda_i+lambda_j)./2;
-% F_edge = @(x,t) (F_edge_0 + t.*F_edge_dt + x.*F_edge_dx);
-%  int_F_edge = zeros(1,length(xmesh));
-%  F_edge_vec = F_edge(xmesh,t);
-%  for j = 2:length(xmesh)
-%         int_F_edge(j) = trapz(xmesh(1:j),F_edge_vec(1:j));
-%  end
-%  int_F_edge = @(x,idx) interp1(xmesh,int_F_edge,x).*idx;
+
  x0=xmesh(1);
-  int_F_edge = @(x,idx) (ip.Results.F_edge_0.*(x-x0)).*idx;
+ int_F_edge = @(x,idx) (ip.Results.F_edge_0.*(x-x0)).*idx;
+
 % % % 4a. Presynaptic somatodendritic compartment
 presyn_mask = spatial_mask('presyn');
 xmesh_presyn = xmesh(presyn_mask);
@@ -195,33 +187,34 @@ x3 = xmesh_axon(end);
  %Adj=readmatrix([matdir filesep 'mouse_adj_matrix_19_01.csv']);
 Adj = Adj_input;
 
-switch ip.Results.connectome_subset
-    case 'Hippocampus'
-        Adj = Adj([27:37 (27+213):(37+213)], [27:37 (27+213):(37+213)]);
-    case 'Hippocampus+PC+RSP'
-        adjinds = [27:37,78:80,147];
-        adjinds = [adjinds,adjinds+213];
-        Adj = Adj(adjinds,adjinds);
-    case 'RH'
-        Adj = Adj(1:213,1:213);
-    case 'LH'
-        Adj = Adj(214:end,214:end);
-    case 'Single'
-        Adj = 1;
-    case 'Single_bis'
-        Adj=[1 1 1]; %if there are connections between two different seedregions otherwise Adj=[1 1]
-    
+% need to adjust for human connectome
+% switch ip.Results.connectome_subset
+%     case 'Hippocampus'
+%         Adj = Adj([27:37 (27+213):(37+213)], [27:37 (27+213):(37+213)]);
+%     case 'Hippocampus+PC+RSP'
+%         adjinds = [27:37,78:80,147];
+%         adjinds = [adjinds,adjinds+213];
+%         Adj = Adj(adjinds,adjinds);
+%     case 'RH'
+%         Adj = Adj(1:213,1:213);
+%     case 'LH'
+%         Adj = Adj(214:end,214:end);
+%     case 'Single'
+%         Adj = 1;
+%     case 'Single_bis'
+%         Adj=[1 1 1]; %if there are connections between two different seedregions otherwise Adj=[1 1]
+% 
+% end
+
+if ip.Results.connectome_subset == "Single_bis"
+    Adj=[1 1 1];
 end
+
 nroi = size(Adj,2);
 
 network_flux_0 = zeros(size(Adj));
 network_flux_L = zeros(size(Adj));
 
-%Gamma1_i=zeros(size(Adj));
-%Gamma1_j=zeros(size(Adj));
-
-%Lambda1_i=0.01*ones(size(Adj));
-%Lambda1_j=0.01*ones(size(Adj));
 n_ss0=zeros(size(Adj));
 res=zeros(size(Adj));
 F_source_edge=zeros(size(Adj));
@@ -232,6 +225,7 @@ F_source_edge_dict = zeros(size(Adj));
 network_flux_0_dict = zeros(size(Adj));
 network_flux_L_dict = zeros(size(Adj));
 
+%parfor i = 1:nroi
 parfor i = 1:nroi
 
     Adj_in = logical(Adj(:,i));
