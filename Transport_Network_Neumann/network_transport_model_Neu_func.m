@@ -141,6 +141,7 @@ Adj = logical(Conn);
 % Initial seed pathology
 
 init_path = zeros(size(Conn,1),1);
+init_path(10,1) = 1;
 
 beta_new = ip.Results.beta * ip.Results.time_scale;
 gamma1_new = ip.Results.gamma1 * ip.Results.time_scale;
