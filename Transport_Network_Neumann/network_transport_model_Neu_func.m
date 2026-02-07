@@ -92,6 +92,9 @@ parse(ip, varargin{:});
 %load([matdir filesep 'CCF_labels.mat'],'CCF_labels');
 load([matdir filesep 'Connectome-Human-Directed-DK.mat'],'Consensus');
 Conn = Consensus.SC;
+
+Conn = Conn * 5.3522e+03;
+
 Adj = logical(Conn);
 
 % ADJUST TO REAL VOLUMES
