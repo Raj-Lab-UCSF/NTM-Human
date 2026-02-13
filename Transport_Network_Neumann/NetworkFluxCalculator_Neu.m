@@ -70,6 +70,7 @@ addParameter(ip, 'mu_r_0',mu_r_0_,validScalar);
 addParameter(ip, 'mu_r_L',mu_r_L_,validScalar);
 addParameter(ip, 'mu_u_0',mu_u_0_,validScalar);
 addParameter(ip, 'mu_u_L',mu_u_L_,validScalar);
+addParameter(ip, 'distances');
 addParameter(ip, 'L_int', L_int_, validScalar);
 addParameter(ip, 'L1', L1_, validScalar);
 %addParameter(ip, 'L2', L2_, validScalar);
@@ -84,10 +85,11 @@ addParameter(ip, 'len_scale', len_scale_, validScalar);
 addParameter(ip, 'time_scale', time_scale_, validScalar);
 parse(ip, varargin{:});
 beta_new = ip.Results.beta*ip.Results.time_scale;
-%gamma1_new = ip.Results.gamma1*ip.Results.time_scale;
-%gamma2_new = ip.Results.gamma2*ip.Results.time_scale;
+
 L1_new = ip.Results.L1 * ip.Results.len_scale;
-%L2_new = ip.Results.L2 * ip.Results.len_scale;
+
+Dist = ip.Results.distances * ip.Results.len_scale; % USE THIS INSTEAD OF L_int
+
 L_int_new = ip.Results.L_int * ip.Results.len_scale;
 L_ais_new = ip.Results.L_ais * ip.Results.len_scale;
 L_syn_new = ip.Results.L_syn * ip.Results.len_scale;
@@ -98,11 +100,6 @@ lambda1_xL =ip.Results.lambda1_xL;
 idx_netw_x0= ip.Results.idx_netw_x0;
 idx_netw_xL=ip.Results.idx_netw_xL;
 
-% gamma1_der_x0 =ip.Results.gamma1_der_x0 ;
-% gamma1_der_xL =ip.Results.gamma1_der_xL;
-% lambda1_der_x0 =ip.Results.lambda1_der_x0 ;
-% lambda1_der_xL =ip.Results.lambda1_der_xL;
-
 % % % 2. Definition of static constants
 v_a = 0.7*ip.Results.len_scale * ip.Results.time_scale; % Average velocity (um/s) of anterograde active transpot (Konsack 2007)
 v_r = 0.7*ip.Results.len_scale * ip.Results.time_scale; % Average velocity (um/s) of retrograde active transport (Konsack 2007)
@@ -112,9 +109,10 @@ mu_r_L = ip.Results.mu_r_L; %release at x=L
 mu_u_0 = ip.Results.mu_u_0; %uptake at x=0
 mu_u_L = ip.Results.mu_u_L; %uptake at x=L
 
-
 % % % 3. Definition of the (inhomogeneous) xmesh
+
 L_total = L1_new + L_int_new -L_syn_new; % size of the system
+
 if strcmp(ip.Results.resmesh, 'fine')
     num_comp = 1000; % number of xmesh points
     num_ext = 100; % number of GM compartments per GM region

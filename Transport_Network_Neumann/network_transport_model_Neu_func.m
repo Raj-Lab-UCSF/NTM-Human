@@ -21,9 +21,10 @@ init_rescale_ = 2e-2;
 dt_ =0.01;
 T_ = 0.1;
 
-trange_ = [0:0.0005:0.002, 0.0025:0.0025:0.1, 0.11:0.01:1];
+trange_ = [0:0.0005:0.002, 0.0025:0.0025:0.1, 0.11:0.01:6];
 
 length(trange_)
+
 frac_ = 0.7;
 L_int_ = 1000; % in micrometers - SET to Matrix from Human Dist. Template!!!
 L1_ = 200;
@@ -88,11 +89,14 @@ parse(ip, varargin{:});
 
 %load([matdir filesep 'Mouse_Tauopathy_Data_HigherQ.mat'],'mousedata_struct'); 
 %load([matdir filesep 'DefaultAtlas.mat'],'DefaultAtlas'); % NEED TO ADD HUMAN VOLUMES
+load([matdir filesep 'Human-DK-Vols_mm3.mat'], 'volumes');
+load([matdir filesep 'Human-DK-dist.mat'], 'distances');
+
+distances = distances * 10^3;
 
 %load([matdir filesep 'CCF_labels.mat'],'CCF_labels');
 load([matdir filesep 'Connectome-Human-Directed-DK.mat'],'Consensus');
 Conn = Consensus.SC;
-
 Conn = Conn * 5.3522e+03;
 
 Adj = logical(Conn);
@@ -113,7 +117,6 @@ Adj = logical(Conn);
 
 % Conn = readmatrix([matdir filesep 'mouse_connectome_19_01.csv']);
 % Adj = readmatrix([matdir filesep 'mouse_adj_matrix_19_01.csv']);
-
 
 % if ~isempty(ip.Results.init_path)
 %     init_path = zeros(size(Conn,1),1);
@@ -181,9 +184,10 @@ inds = logical(ones(size(Conn,1),1));
 
 Adj = Adj(inds,inds);
 Conn = Conn(inds,inds);
+
 %Vol = DefaultAtlas.volumes(inds);
 
-Vol = ones(size(Conn,1),1) * 100; % ADJUST TO REAL VOLUMES
+Vol = volumes(inds)*8; % Volumes in mm^3 - MAKE SURE UNITS ARE CORRECT
 
 init_tau = init_tau(inds);
 nroi = size(Adj,1);
