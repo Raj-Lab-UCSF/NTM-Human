@@ -1,0 +1,475 @@
+function [network_flux_0, network_flux_L, F_source_edge,n_ss0, mass_edge] = NetworkFluxCalculator_Neu(tau_x0,tau_xL,f_ss0,Adj_input,varargin) % removed matdir
+
+
+    matdir = [cd filesep 'MatFiles'];
+
+% % % 1. Preset values of flexible parameters
+beta_ = 1e-06;
+gamma1_x0_= 2e-05;
+gamma1_xL_ = 2e-05 ;
+gamma2_ = 0;
+delta_ = 50;%      
+epsilon_ =25;    
+lambda1_x0_ = 0.0025;    
+lambda1_xL_ = 0.0025; 
+% lambda1_der_x0_ = 0;%0.01; %0.01;%0.02  0.01 
+% lambda1_der_xL_ =0 ; %0.01;
+% gamma1_der_x0_ =0; % 0.01; %0.01;%0.02  0.01 
+% gamma1_der_xL_ =0; 
+%lambda2_=0.025;
+frac_ = 0.92; % Average fraction of n diffusing (Konsack 2007)
+%L_int_ = 1000; % in micrometers
+L1_ = 200;
+%L2_ = 200; 
+L_ais_ = 40;
+L_syn_ = 40;
+resmesh_ = 'coarse';
+reltol_ = 1e-6;
+abstol_ = 1e-6;
+fsolvetol_ = 1e-6;
+connectome_subset_ ='Hippocampus+PC+RSP'; %'Hippocampus';
+len_scale_ = 1e-3;
+time_scale_ = 1; %6*30*24*(60)^2% 1;
+% % New parameters
+F_edge_0_ = 1e-08 * time_scale_;
+mu_r_0_ = 1e-05* time_scale_; %release at x=0
+mu_r_L_ = mu_r_0_; %release at x=L
+mu_u_0_ = 1e-04* time_scale_; %uptake at x=0
+mu_u_L_ = mu_u_0_; %uptake at x=L
+F_edge_dt = 0e-05; %dF/dt
+F_edge_dx = 0e-05; %dF/dx
+idx_netw_x0_=1;
+idx_netw_xL_=1;
+
+
+
+ip = inputParser;
+validScalar = @(x) isnumeric(x) && isscalar(x) && (x>=0);
+validArray = @(x) isnumeric(x); % && (sum(x>=0) == length(x));
+validLogical=@(x) islogical(x);
+%validAxonDiv=@(x) strcmp(x,'r1') | strcmp(x,'half') | strcmp(x,'r2');
+
+addParameter(ip, 'beta', beta_, validScalar);
+addParameter(ip, 'F_edge_0', F_edge_0_ , validScalar);
+addParameter(ip, 'gamma2', gamma2_, validScalar);
+addParameter(ip, 'delta', delta_, validScalar);
+addParameter(ip, 'epsilon', epsilon_, validScalar);
+addParameter(ip, 'frac', frac_, validScalar);
+addParameter(ip, 'gamma1_x0', gamma1_x0_, validArray);
+addParameter(ip, 'gamma1_xL', gamma1_xL_, validArray);
+addParameter(ip, 'lambda1_x0', lambda1_x0_, validArray);
+addParameter(ip, 'lambda1_xL', lambda1_xL_, validArray);
+ addParameter(ip, 'idx_netw_x0', idx_netw_x0_, validArray);
+ addParameter(ip, 'idx_netw_xL', idx_netw_xL_, validLogical);
+% addParameter(ip, 'gamma1_der_x0', gamma1_der_x0_, validArray);
+% addParameter(ip, 'gamma1_der_xL', gamma1_der_xL_, validArray);
+
+addParameter(ip, 'mu_r_0',mu_r_0_,validScalar);
+addParameter(ip, 'mu_r_L',mu_r_L_,validScalar);
+addParameter(ip, 'mu_u_0',mu_u_0_,validScalar);
+addParameter(ip, 'mu_u_L',mu_u_L_,validScalar);
+%addParameter(ip, 'distances');
+%addParameter(ip, 'L_int', L_int_, validScalar);
+addParameter(ip, 'L1', L1_, validScalar);
+%addParameter(ip, 'L2', L2_, validScalar);
+addParameter(ip, 'resmesh', resmesh_);
+addParameter(ip, 'L_ais', L_ais_);
+addParameter(ip, 'L_syn', L_syn_);
+addParameter(ip, 'reltol', reltol_, validScalar);
+addParameter(ip, 'abstol', abstol_, validScalar);
+addParameter(ip, 'fsolvetol', fsolvetol_, validScalar);
+addParameter(ip, 'connectome_subset', connectome_subset_);
+addParameter(ip, 'len_scale', len_scale_, validScalar);
+addParameter(ip, 'time_scale', time_scale_, validScalar);
+parse(ip, varargin{:});
+beta_new = ip.Results.beta*ip.Results.time_scale;
+
+L1_new = ip.Results.L1 * ip.Results.len_scale;
+
+%Dist = ip.Results.distances * ip.Results.len_scale; % USE THIS INSTEAD OF L_int
+
+%L_int_new = ip.Results.L_int * ip.Results.len_scale;
+L_ais_new = ip.Results.L_ais * ip.Results.len_scale;
+L_syn_new = ip.Results.L_syn * ip.Results.len_scale;
+gamma1_x0 =ip.Results.gamma1_x0 ;
+gamma1_xL =ip.Results.gamma1_xL;
+lambda1_x0 =ip.Results.lambda1_x0 ;
+lambda1_xL =ip.Results.lambda1_xL;
+idx_netw_x0= ip.Results.idx_netw_x0;
+idx_netw_xL=ip.Results.idx_netw_xL;
+
+% % % 2. Definition of static constants
+v_a = 0.7*ip.Results.len_scale * ip.Results.time_scale; % Average velocity (um/s) of anterograde active transpot (Konsack 2007)
+v_r = 0.7*ip.Results.len_scale * ip.Results.time_scale; % Average velocity (um/s) of retrograde active transport (Konsack 2007)
+diff_n = 12*ip.Results.len_scale^2 * ip.Results.time_scale; % Diffusivity (um^2/s) of n (Konsack 2007)
+mu_r_0 = ip.Results.mu_r_0; %release at x=0
+mu_r_L = ip.Results.mu_r_L; %release at x=L
+mu_u_0 = ip.Results.mu_u_0; %uptake at x=0
+mu_u_L = ip.Results.mu_u_L; %uptake at x=L
+
+% % % 3. Definition of the (inhomogeneous) xmesh
+
+%
+
+if strcmp(ip.Results.resmesh, 'fine')
+    num_comp = 1000; % number of xmesh points
+    num_ext = 100; % number of GM compartments per GM region
+    num_int = num_comp - (num_ext);
+    xmesh_presyn = [linspace(0,L1_new-10*ip.Results.len_scale,num_ext-40),...
+        (L1_new-9.75*ip.Results.len_scale):0.25*ip.Results.len_scale:L1_new];
+    % xmesh2 = [(L1_new+L_int_new+0.25*ip.Results.len_scale):0.25*ip.Results.len_scale:...
+    %     (L1_new+L_int_new+10*ip.Results.len_scale),...
+    %     linspace(L1_new+L_int_new+10.25*ip.Results.len_scale,L_total,num_ext-40)];
+
+
+    xmesh_ais=[(L1_new+0.25*ip.Results.len_scale):0.25*ip.Results.len_scale:(L1_new+L_ais_new)];
+    xmesh_axon =@(L_int_new) [
+        linspace(L1_new+L_ais_new+0.25*ip.Results.len_scale,L1_new+L_int_new-L_syn_new,...
+        num_int-((L_ais_new)/(0.25*ip.Results.len_scale)))]; %should we consuder the length of the syn in the fiber length?
+        %,...
+        %(L1_new+L_int_new-(L_syn_new-0.25*ip.Results.len_scale)):0.25*ip.Results.len_scale:(L1_new+L_int_new-L_syn_new)];
+elseif strcmp(ip.Results.resmesh, 'coarse')
+    num_comp = 250; % number of xmesh points
+    num_ext = 25; % number of compartments per SD region
+    num_int = num_comp - (num_ext);
+    xmesh_presyn = [linspace(0,L1_new-10*ip.Results.len_scale,num_ext-5),...
+        (L1_new-8*ip.Results.len_scale):2*ip.Results.len_scale:L1_new];
+    xmesh_ais=[(L1_new+2*ip.Results.len_scale):2*ip.Results.len_scale:(L1_new+L_ais_new) ];
+    xmesh_axon =@(L_int_new) [linspace(L1_new+L_ais_new+2*ip.Results.len_scale,L1_new+L_int_new-L_syn_new,...
+        num_int-((L_ais_new)/(2*ip.Results.len_scale)))] ; %,...
+        %(L1_new+L_int_new-(L_syn_new-2*ip.Results.len_scale)):2*ip.Results.len_scale:(L1_new+L_int_new-L_syn_new)];
+end
+xmesh =@(L_int_new) [xmesh_presyn xmesh_ais xmesh_axon(L_int_new)];%.*ones(1,size(L_int_new,1));
+
+
+
+% % % 4. Steady State Calculation
+% Follows the derivation of Michiel Bertsh
+
+gamma1_fun=@(gamma1_i,gamma1_j,L_int_new,x)(gamma1_i+gamma1_j)./2;
+lambda_fun=@(lambda_i,lambda_j,x)(lambda_i+lambda_j)./2;
+
+L_total =@(L_int_new) L1_new + L_int_new -L_syn_new; % size of the system
+%gamma1_fun=@(gamma1_i,gamma1_j,L_int_new,x)(1-x./L_total(L_int_new)).*(gamma1_i)+(x./L_total(L_int_new)).*(gamma1_j);
+
+
+ x0=xmesh_presyn(1);
+ int_F_edge = @(x,idx) (ip.Results.F_edge_0.*(x-x0)).*idx;
+
+% % % 4a. Presynaptic somatodendritic compartment
+%presyn_mask =@(L_int_new) spatial_mask('presyn',L_int_new);
+%xmesh_presyn = @(L_int_new)xmesh(presyn_mask(L_int_new));
+n0 = @(B) B;
+options = odeset('RelTol',ip.Results.reltol,'AbsTol',ip.Results.abstol);    %,'NonNegative'  ,1:length(n0));
+n_ss_presyn = @(B,N_i,idx) ode15s(@(x,n)ode_ss_n(x,B,n,diff_n,N_i,idx),[0,L1_new],n0(B),options);
+n_ss_presyn = @(B,N_i,idx,x) deval(n_ss_presyn(B,N_i,idx),x);
+x1 = xmesh_presyn(end);
+
+% % % 4b. Axon initial segment
+%ais_mask =@(L_int_new) spatial_mask('ais',L_int_new);
+%xmesh_ais = @(L_int_new)xmesh(ais_mask(L_int_new));
+x2 =L1_new + L_ais_new; % xmesh_ais(end);
+n_ss_ais = @(B,N_i,idx,lambda1_i,lambda1_j) ode15s(@(x,n)ode_ss_n(x,B,n,diff_n*lambda_fun(lambda1_i,lambda1_j,x),N_i,idx),[L1_new,L1_new+L_ais_new],n_ss_presyn(B,N_i,idx,x1),options);
+n_ss_ais = @(B,N_i,idx,lambda1_i,lambda1_j,x) deval(n_ss_ais(B,N_i,idx,lambda1_i,lambda1_j),x);
+
+
+% % % 4c. Axon
+%axon_mask = @(L_int_new)spatial_mask('axon',L_int_new);
+%xmesh_ax=@(L_int_new)xmesh(L_int_new);
+%xmesh_axon= @(L_int_new)xmesh(axon_mask(L_int_new));
+n_ss_axon = @(B,N_i,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new) ode15s(@(x,n)ode_ss_axon(x,B,gamma1_i,gamma1_j,L_int_new,n,N_i,idx),[L1_new+L_ais_new,...
+   L1_new+L_int_new-L_syn_new],n_ss_ais(B,N_i,idx,lambda1_i,lambda1_j,x2),options);
+n_ss_axon = @(B,N_i,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new,x) deval(n_ss_axon(B,N_i,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new),x);
+x3 = @(L_int_new)  L1_new+L_int_new-L_syn_new;      %xmesh_ax(end);
+ %xmesh(end)
+ f_init=@(B,N_i,N_j,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new,idx2) (-mu_r_0.*B + mu_u_0.*N_i+ int_F_edge(x3(L_int_new),idx)- mu_r_L.*n_ss_axon(B,N_i,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new,x3(L_int_new)) + mu_u_L.*N_j).*idx2;
+
+ %f_init=@(B,N_i,N_j,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new,L_int_ij) (-mu_r_0.*B + mu_u_0.*N_i+ int_F_edge(x3(L_int_ij),idx)- mu_r_L.*n_ss_axon(B,N_i,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new,x3(L_int_ij)) + mu_u_L.*N_j);
+ % % %
+ 
+ 
+ % % % 5a. Flux calculation on network 
+ %ones(length(tau_x0))
+%ip.Results.connectome_subset
+ %Adj=readmatrix([matdir filesep 'mouse_adj_matrix_19_01.csv']);
+%if ip.Results.connectome_subset == "Human_All"
+   
+ Adj = double( Adj_input);
+%end
+%size(Adj)
+%Adj(:,1)
+nroi = size(Adj,2);
+%Dist=zeros(nroi);
+distances=load([matdir filesep 'Human-DK-dist.mat'], 'distances');
+distances=struct2cell(distances) ;
+Dist=distances{1,1};  %(1:end ,1:end);
+Gamma1_i=zeros(size(Adj));
+Gamma1_j=zeros(size(Adj));
+
+
+Lambda1_i=0.01*ones(size(Adj));
+Lambda1_j=0.01*ones(size(Adj));
+
+%L2=max(Dist,'all');
+%Dist = distances; %*10^3*ip.Results.len_scale;
+% need to adjust for human connectome
+% switch ip.Results.connectome_subset
+%     case 'Hippocampus'
+%         Adj = Adj([27:37 (27+213):(37+213)], [27:37 (27+213):(37+213)]);
+%     case 'Hippocampus+PC+RSP'
+%         adjinds = [27:37,78:80,147];
+%         adjinds = [adjinds,adjinds+213];
+%         Adj = Adj(adjinds,adjinds);
+%     case 'RH'
+%         Adj = Adj(1:213,1:213);
+%     case 'LH'
+%         Adj = Adj(214:end,214:end);
+%     case 'Single'
+%         Adj = 1;
+%     case 'Single_bis'
+%         Adj=[1 1 1]; %if there are connections between two different seedregions otherwise Adj=[1 1]
+% 
+% end
+
+% if ip.Results.connectome_subset == "Single_bis"
+%     Adj=[1 1 1];
+% end
+
+
+mass_edge=zeros(nroi);
+network_flux_0 = zeros(size(Adj));
+network_flux_L = zeros(size(Adj));
+
+n_ss0=zeros(size(Adj));
+res=zeros(size(Adj));
+F_source_edge=zeros(size(Adj));
+
+% n_ss0_dict = zeros(size(Adj));
+% res_dict = zeros(size(Adj));
+% F_source_edge_dict = zeros(size(Adj));
+% network_flux_0_dict = zeros(size(Adj));
+% network_flux_L_dict = zeros(size(Adj));
+
+%parfor i = 1:nroi
+for i = 1: nroi
+
+    Adj_in = logical(Adj(:,i));
+    %Adj_in=Adj_in(1,1)
+    %Adj_in = (Adj(:,i))
+    Dist_netw=  Dist(Adj_in);
+    %length(Dist_netw)
+    %Dist_netw=Dist_netw.';
+    %size(Dist_netw)
+    tau_xL_i = tau_xL(i);
+    tau_xL_i = repmat(tau_xL_i,length(Adj_in),1);
+     idx_netw_xL_i=idx_netw_xL(i);
+     idx_netw_xL_i = repmat(idx_netw_xL_i,length(Adj_in),1);
+    gamma1_xL_i = gamma1_xL(i);
+    gamma1_xL_i = repmat(gamma1_xL_i,length(Adj_in),1);
+    
+     lambda1_xL_i = lambda1_xL(i);
+    lambda1_xL_i = repmat(lambda1_xL_i,length(Adj_in),1);
+
+    
+    i_app =Adj_in;
+    tau_x0_i = tau_x0(i_app,i);
+    tau_xL_i = tau_xL_i(i_app);
+    %size(tau_xL_i)
+    idx_netw_x0_i= idx_netw_x0(i_app);
+    idx_netw_xL_i= idx_netw_xL_i(i_app);
+    gamma1_x0_i = gamma1_x0(i_app,i);
+    gamma1_xL_i = gamma1_xL_i(i_app);
+    Gamma1_i(i_app,i)=gamma1_x0_i;
+    Gamma1_j(i_app,i)=gamma1_xL_i;
+    
+    lambda1_x0_i = lambda1_x0(i_app,i);
+    lambda1_xL_i = lambda1_xL_i(i_app);
+    Lambda1_i(i_app,i)=lambda1_x0_i;
+    Lambda1_j(i_app,i)=lambda1_xL_i;
+    
+    if ~isempty(tau_x0_i)
+
+        options = optimset('TolFun',ip.Results.fsolvetol,'Display','off');
+        idx_netw=logical(idx_netw_x0_i+idx_netw_xL_i);
+        %L_int_new=Dist_netw;
+        %Dist_netw=L_int_new;
+        %i_app_id=i_app(i_app>0)
+        %idx1=1; %ones(length(Dist_netw),1);
+        idx1=ones(length(Dist_netw),1);
+        fun_ss_app=@(B,N_i,N_j,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new,idx2)f_init(B,N_i,N_j,idx,lambda1_i,lambda1_j,gamma1_i,gamma1_j,L_int_new,idx1);
+        f0=f_ss0(i_app,i)+1e-7;
+        %size(f0)
+        %n0=zeros(length(Dist_netw),1);
+        for j=1:  length(Dist_netw)
+        %    idx=ones(length(Dist_netw),1);
+        % fun_ss = @(B) f_init(B,tau_x0_i,tau_xL_i(j),idx_netw(j),lambda1_x0_i,lambda1_xL_i(j),gamma1_x0_i,gamma1_xL_i(j),L_int_new(j),Dist_netw(j)).*idx(j);   
+        %fun_ss = @(B) fun_ss_app(B,tau_x0_i,tau_xL_i(j),idx_netw(j),lambda1_x0_i,lambda1_xL_i(j),gamma1_x0_i,gamma1_xL_i(j),L_int_new(j),Dist_netw(j), idx1); %,idx1(j));   
+        %f0=
+        
+        
+        %fun_ss = @(B) fun_ss_app(B,tau_x0_i(j),tau_xL_i(j),idx_netw(j),lambda1_x0_i(j),lambda1_xL_i(j),gamma1_x0_i(j),gamma1_xL_i(j),L_int_new(j),Dist_netw(j), idx1); %,idx1(j));   
+       fun_ss = @(B) fun_ss_app(B,tau_x0_i,tau_xL_i(j),idx_netw(j),lambda1_x0_i,lambda1_xL_i(j),gamma1_x0_i,gamma1_xL_i(j),Dist_netw(j), idx1(j)); %,idx1(j));   
+        %f0=
+        
+        %f0=
+        %n0(j,1)=fsolve(fun_ss,f0(j,1),options)
+        end
+        %fun_ss
+        %f0=f_ss0(i_app,i)+1e-7;
+         % n0=fsolve(fun_ss,f0,options)
+        %n_ss0(i_app,i)= n0;
+         n_ss0(i_app,i)=  fsolve(fun_ss,f0,options);
+        
+       % for j= length(Dist_netw)
+       %     idx=ones(length(Dist_netw),1);
+       %     (n_ss_axon(n_0,tau_x0_i,idx_netw(j),lambda1_x0_i,lambda1_xL_i(j),gamma1_x0_i,gamma1_xL_i(j),L_int_new(j),x3(Dist_netw(j))) - mu_u_L.*tau_xL_i).*idx(j);
+       % 
+        %n_ss0_temp = fsolve(fun_ss,f0,options);
+        
+        %temp_n_ss0_arr = zeros(nroi,1);
+        %temp_n_ss0_arr(i_app) = n_ss0_temp;
+        %n_ss0_dict(i,:)=temp_n_ss0_arr;
+
+        res(i_app,i)=fun_ss(n_ss0(i_app,i));
+        fun_ss(n_ss0(i_app,i));
+        % res_temp = fun_ss(n_ss0_temp);
+        % temp_res_arr = zeros(nroi,1);
+        % temp_res_arr(i_app) = res_temp;
+        % res_dict(i,:) = temp_res_arr;
+
+        F_source_edge(i_app,i)= int_F_edge(x3(Dist_netw),idx_netw);
+
+        % F_source_edge_temp = int_F_edge(x3,idx_netw);
+        % temp_F_source_edge = zeros(nroi,1);
+        % temp_F_source_edge(i_app) = F_source_edge_temp;
+        % F_source_edge_dict(i,:)= temp_F_source_edge;
+
+        network_flux_0(i_app,i) = -mu_r_0.* n_ss0(i_app,i)+ mu_u_0.*tau_x0_i;
+
+        % netflux_0_temp = -mu_r_0.* n_ss0_temp+ mu_u_0.*tau_x0_i;
+        % temp_netflux_0_arr = zeros(nroi,1);
+        % temp_netflux_0_arr(i_app) = netflux_0_temp;
+        % network_flux_0_dict(i,:) = temp_netflux_0_arr;
+
+        %network_flux_L(i_app,i)=mu_r_L.*n_ss_axon(n_ss0(i_app,i),tau_x0_i,idx_netw,lambda1_x0_i,lambda1_xL_i,gamma1_x0_i,gamma1_xL_i,L_int_new,x3(Dist_netw)) - mu_u_L.*tau_xL_i;
+        %mu_r_L.*n_ss_axon(n_ss0(i_app,i),tau_x0_i,idx_netw,lambda1_x0_i,lambda1_xL_i,gamma1_x0_i,gamma1_xL_i,L_int_new,x3(Dist_netw)) - mu_u_L.*tau_xL_i
+        
+        network_flux_L(i_app,i)= network_flux_0(i_app,i)+F_source_edge(i_app,i);
+        % netflux_L_temp = mu_r_L.*n_ss_axon(n_ss0_temp,tau_x0_i,idx_netw,lambda1_x0_i,lambda1_xL_i,gamma1_x0_i,gamma1_xL_i,x3) - mu_u_L.*tau_xL_i;
+        % temp_netflux_L_arr = zeros(nroi,1);
+        % temp_netflux_L_arr(i_app) = netflux_L_temp;
+        % network_flux_L_dict(i,:) = temp_netflux_L_arr;
+
+    end
+ end
+
+ n_ss0_vec=n_ss0(:);
+ %size(n_ss0_vec)
+ tau_x0_vec=tau_x0(:);
+ %size(tau_x0_vec)
+ idx_netw_x0_vec=idx_netw_x0(:);
+ %size(idx_netw_x0_vec)
+ Gamma1_i=Gamma1_i(:);
+ Gamma1_j=Gamma1_j(:);
+% 
+ Lambda1_i=Lambda1_i(:);
+ Lambda1_j=Lambda1_j(:);
+% % 
+% % %size(Gamma1_i)
+% % %size(Gamma1_j)
+
+ %xmesh=xmesh(Dist(:));
+% 
+ n_ss_presyn_eval= n_ss_presyn(n_ss0_vec,tau_x0_vec,idx_netw_x0_vec,xmesh_presyn);
+% % 
+  n_ss_ais_eval=n_ss_ais(n_ss0_vec,tau_x0_vec,idx_netw_x0_vec,Lambda1_i,Lambda1_j,xmesh_ais);
+   n_ss=[n_ss_presyn_eval n_ss_ais_eval ];
+
+ n_m_ss=n_ss+(gamma1_fun(Gamma1_i,Gamma1_j, Dist(:),[xmesh_presyn xmesh_ais]).* n_ss.^2)./(beta_new-ip.Results.gamma2 *n_ss);
+% 
+  mass_edge_app=trapz([xmesh_presyn xmesh_ais ], n_m_ss,2);
+
+mass_edge_app=reshape(mass_edge_app,nroi,nroi);
+
+
+n_ss0_vec=reshape(n_ss0, nroi,nroi);
+ 
+ tau_x0_vec=reshape(tau_x0, nroi, nroi);
+
+ idx_netw_x0_vec=reshape(idx_netw_x0, nroi,nroi);
+
+ Gamma1_i=reshape(Gamma1_i,nroi,nroi);
+ Gamma1_j=reshape(Gamma1_j,nroi,nroi);
+% 
+ Lambda1_i=reshape(Lambda1_i,nroi,nroi);
+ Lambda1_j=reshape(Lambda1_j,nroi,nroi);
+  for i=1:nroi
+     for j=1:nroi
+         L_int=Dist(i,j);
+         if L_int>0
+      n_ss_axon_eval=n_ss_axon(n_ss0_vec(i,j),tau_x0_vec(i,j),idx_netw_x0_vec(i,j),Lambda1_i(i,j),Lambda1_j(i,j),Gamma1_i(i,j),Gamma1_j(i,j),L_int, xmesh_axon(L_int));
+ %n_ss=[n_ss_presyn_eval n_ss_ais_eval n_ss_axon_eval];
+% 
+%  % n_ss_eval_1=[n_ss_presyn_eval n_ss_ais_eval n_ss_axon_eval];
+%  % gamma1_fun(Gamma1_i,Gamma1_j,[xmesh_presyn xmesh_ais xmesh_axon]);
+   n_m_axon=n_ss_axon_eval+(gamma1_fun(Gamma1_i(i,j),Gamma1_j(i,j),L_int,[xmesh_axon(L_int)]).* n_ss_axon_eval.^2)./(beta_new-ip.Results.gamma2 *n_ss_axon_eval);
+% 
+  mass_edge_axon=trapz([ xmesh_axon(L_int)], n_m_axon,2);
+
+mass_edge(i,j)= mass_edge_app(i,j)+mass_edge_axon     ;
+         end
+     end
+  end
+
+
+
+
+% for i = 1:nroi
+% 
+%     Adj_in = logical(Adj(:,i));
+%     i_app =Adj_in;
+% 
+%     n_ss0(i_app,i) = n_ss0_dict(i,i_app);
+%     res(i_app,i) = res_dict(i,i_app);
+%     F_source_edge(i_app,i) = F_source_edge_dict(i,i_app);
+%     network_flux_0(i_app,i) = network_flux_0_dict(i,i_app);
+%     network_flux_L(i_app,i) = network_flux_L_dict(i,i_app);
+% 
+% end
+
+
+% % % 6. Functions
+   
+    function nprime = ode_ss_n(x,B,n,D,N_i,idx)
+        nprime = (1./D).*(mu_r_0.*B - mu_u_0.*N_i - int_F_edge(x,idx));
+    end
+
+    function nprime = ode_ss_axon(x,B,gamma1_i,gamma1_j,L_int_new,n,N_i,idx)
+        
+        nprime = 1./(ip.Results.frac*diff_n).*((1-ip.Results.frac).*((v_a*(1+ip.Results.delta.*n).*...
+        (1-((gamma1_fun(gamma1_i,gamma1_j,L_int_new,x)*ip.Results.epsilon.*n.^2)./(beta_new-ip.Results.gamma2.*n)))-v_r)).*n +...
+        mu_r_0.*B - mu_u_0.*N_i - int_F_edge(x,idx));
+    end
+
+    function [maskvals] = spatial_mask(compartment,L_int_new)
+        switch compartment
+            case 'presyn'
+                maskvals = (xmesh <= L1_new);
+            case 'ais'
+                maskvals = logical(-1 + (xmesh > L1_new) + ...
+                    (xmesh < (L1_new + L_ais_new)));
+            case 'axon'
+                maskvals = logical(-1 + (xmesh >= L1_new + L_ais_new) + ...
+                    (xmesh <= (L1_new + L_int_new - L_syn_new)));
+            %case 'syncleft'
+              %  maskvals = logical(-1 + (xmesh > L1_new + L_int_new - L_syn_new) + ...
+                   % (xmesh < (L1_new + L_int_new))); 
+           % case 'postsyn'
+             %   maskvals = logical(-1 + (xmesh >= L1_new + L_int_new) + ...
+              %      (xmesh <= (L1_new + L_int_new + L2_new)));
+            otherwise
+                error('Incorrect compartment specification')
+        end
+    end
+
+end
