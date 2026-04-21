@@ -385,7 +385,7 @@ end
     title('Total flux')
       %subtitle(txt,'Interpreter','latex');
 
-  Mass_node = sum(Vol.*N,1)+sum(Vol.*M,1); %+sum(Vol.*N_int,1)+sum(Vol.*M_int,1);
+  Mass_node = sum(Vol.*N,1)+sum(Vol.*M,1)+sum(Vol.*N_int,1)+sum(Vol.*M_int,1);
     % size(Mass_node)
      fprintf('Total Node Mass = %d\n',Mass_node)
     Mass_tot_edge=zeros(1,nt);
